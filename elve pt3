@@ -1,0 +1,450 @@
+#!/usr/bin/env python3
+import heapq
+import sys
+from collections import deque
+from datetime import datetime, time
+
+# =============================================
+#   Timezone Handling (Optional)
+# =============================================
+try:
+    from zoneinfo import ZoneInfo
+    AMSTERDAM = ZoneInfo("Europe/Amsterdam")
+except:
+    AMSTERDAM = None
+
+# =============================================
+#   Floor Range
+# =============================================
+MIN_FLOOR = -10
+MAX_FLOOR = 30
+FLOOR_COUNT = MAX_FLOOR - MIN_FLOOR + 1
+
+# =============================================
+#   Linked List (History)
+# =============================================
+class ListNode:
+    def __init__(self, floor_val):
+        self.floor = floor_val
+        self.next = None
+
+class LinkedList:
+    def __init__(self):
+        self.head = None
+        self.tail = None
+
+    def append(self, f):
+        new_node = ListNode(f)
+        if not self.head:
+            self.head = self.tail = new_node
+        else:
+            self.tail.next = new_node
+            self.tail = new_node
+
+    def to_list(self):
+        arr = []
+        cur = self.head
+        while cur:
+            arr.append(cur.floor)
+            cur = cur.next
+        return arr
+
+# =============================================
+#   Stack (Undo)
+# =============================================
+class Stack:
+    def __init__(self):
+        self._data = []
+
+    def push(self, x):
+        self._data.append(x)
+
+    def pop(self):
+        if not self._data:
+            return None
+        return self._data.pop()
+
+    def is_empty(self):
+        return len(self._data) == 0
+
+# =============================================
+#   Priority Queue Up
+# =============================================
+class UpPQ:
+    def __init__(self):
+        self.heap = []
+
+    def push(self, fl):
+        heapq.heappush(self.heap, fl)
+
+    def pop(self):
+        return heapq.heappop(self.heap) if self.heap else None
+
+    def peek(self):
+        return self.heap[0] if self.heap else None
+
+    def empty(self):
+        return len(self.heap) == 0
+
+    def remove(self, fl):
+        try:
+            self.heap.remove(fl)
+            heapq.heapify(self.heap)
+            return True
+        except ValueError:
+            return False
+
+    def to_list(self):
+        return sorted(self.heap)
+
+# =============================================
+#   Priority Queue Down
+# =============================================
+class DownPQ:
+    def __init__(self):
+        self.heap = []
+
+    def push(self, fl):
+        heapq.heappush(self.heap, -fl)
+
+    def pop(self):
+        if not self.heap:
+            return None
+        return -heapq.heappop(self.heap)
+
+    def peek(self):
+        return -self.heap[0] if self.heap else None
+
+    def empty(self):
+        return len(self.heap) == 0
+
+    def remove(self, fl):
+        try:
+            self.heap.remove(-fl)
+            heapq.heapify(self.heap)
+            return True
+        except:
+            return False
+
+    def to_list(self):
+        return sorted([-x for x in self.heap], reverse=True)
+
+# =============================================
+#   Queue FIFO
+# =============================================
+class RequestQueue:
+    def __init__(self):
+        self.q = deque()
+
+    def push(self, fl):
+        self.q.append(fl)
+
+    def pop(self):
+        return self.q.popleft() if self.q else None
+
+    def peek(self):
+        return self.q[0] if self.q else None
+
+    def empty(self):
+        return len(self.q) == 0
+
+    def to_list(self):
+        return list(self.q)
+
+# =============================================
+#   Elevator Class
+# =============================================
+class Elevator:
+    def __init__(self, name):
+        self.name = name
+        self.current = 0
+        self.direction = 'idle'
+        self.up = UpPQ()
+        self.down = DownPQ()
+        self.history = LinkedList()
+
+    # ----------------------------
+    def add_request(self, fl):
+        if fl == self.current:
+            self.history.append(fl)
+            return
+        if fl > self.current:
+            self.up.push(fl)
+        else:
+            self.down.push(fl)
+
+    # ----------------------------
+    def has_pending(self):
+        return (not self.up.empty()) or (not self.down.empty())
+
+    # ----------------------------
+    def next_stop_preview(self):
+        if self.direction == 'up':
+            return self.up.peek() or self.down.peek()
+        if self.direction == 'down':
+            return self.down.peek() or self.up.peek()
+        return self.up.peek() or self.down.peek()
+
+    # ----------------------------
+    def move_to_next(self):
+        if self.direction == 'idle':
+            up_p = self.up.peek()
+            down_p = self.down.peek()
+
+            if up_p is not None and down_p is not None:
+                self.direction = 'up' if abs(up_p - self.current) <= abs(down_p - self.current) else 'down'
+            elif up_p is not None:
+                self.direction = 'up'
+            elif down_p is not None:
+                self.direction = 'down'
+            else:
+                return None
+
+        if self.direction == 'up':
+            if not self.up.empty():
+                nxt = self.up.pop()
+                self.current = nxt
+                self.history.append(nxt)
+
+                if self.up.empty() and not self.down.empty():
+                    self.direction = 'down'
+                elif self.up.empty():
+                    self.direction = 'idle'
+                return nxt
+            else:
+                self.direction = 'down'
+                return self.move_to_next()
+
+        if self.direction == 'down':
+            if not self.down.empty():
+                nxt = self.down.pop()
+                self.current = nxt
+                self.history.append(nxt)
+
+                if self.down.empty() and not self.up.empty():
+                    self.direction = 'up'
+                elif self.down.empty():
+                    self.direction = 'idle'
+                return nxt
+            else:
+                self.direction = 'up'
+                return self.move_to_next()
+
+# =============================================
+#   Traffic & Dynamic Dispatch
+# =============================================
+def floor_to_index(f):
+    return f - MIN_FLOOR
+
+def compute_score(elev, f, traffic, params):
+    dist = abs(elev.current - f)
+    dir_pen = 0
+
+    if elev.direction == 'up' and f < elev.current:
+        dir_pen += params['opp_dir_penalty']
+    if elev.direction == 'down' and f > elev.current:
+        dir_pen += params['opp_dir_penalty']
+
+    idle_bonus = params['idle_bonus'] if elev.direction == 'idle' else 0
+
+    traffic_val = traffic[floor_to_index(f)]
+    traffic_bias = 0
+
+    if traffic_val >= params['traffic_threshold']:
+        traffic_bias = params['traffic_penalty']
+
+        if abs(elev.current - f) <= params['traffic_local_radius']:
+            traffic_bias = -params['traffic_bonus_local']
+
+    return dist + dir_pen - idle_bonus + traffic_bias
+
+def assign_request_to_elevator_with_dynamic(f, elevators, traffic, params):
+    scores = [(compute_score(e, f, traffic, params), e) for e in elevators]
+    scores.sort(key=lambda x: x[0])
+    return scores[0][1]
+
+# =============================================
+#   Idle Brain Mode
+# =============================================
+def is_night_time():
+    now = datetime.now(AMSTERDAM) if AMSTERDAM else datetime.now()
+    return now.time() >= time(22,0) or now.time() <= time(6,0)
+
+def idle_brain_move(elevs):
+    night = is_night_time()
+
+    targetA = 0 if night else 10
+    targetB = 0
+
+    if elevs[0].direction == 'idle' and not elevs[0].has_pending() and elevs[0].current != targetA:
+        elevs[0].add_request(targetA)
+
+    if elevs[1].direction == 'idle' and not elevs[1].has_pending() and elevs[1].current != targetB:
+        elevs[1].add_request(targetB)
+
+# =============================================
+#   UI Helpers
+# =============================================
+def icon_for_direction(d):
+    return {"up":"🚀 Up","down":"⬇️ Down"}.get(d, "💤 Idle")
+
+def pretty_line(e):
+    nxt = e.next_stop_preview() or "—"
+    return f"[{e.name}] {icon_for_direction(e.direction)} | Cur={e.current:>3} | Next={nxt}"
+
+def print_status(elevs, req_q, undo, traffic):
+    for e in elevs:
+        print(pretty_line(e))
+        print("   UP   :", e.up.to_list())
+        print("   DOWN :", e.down.to_list())
+        print("   HIST :", e.history.to_list())
+
+    print("Queue:", req_q.to_list())
+    print("Undo :", undo._data)
+
+    hot = [(i+MIN_FLOOR, traffic[i]) for i in range(FLOOR_COUNT) if traffic[i] > 0]
+    hot = sorted(hot, key=lambda x: -x[1])[:5]
+
+    if hot:
+        print("Hot floors:", hot)
+
+    print("-----")
+
+# =============================================
+#   MAIN SIMULATION LOOP
+# =============================================
+def run_interactive():
+    elevs = [Elevator("A"), Elevator("B")]
+    req_q = RequestQueue()
+    undo = Stack()
+    traffic = [0] * FLOOR_COUNT
+
+    params = {
+        'opp_dir_penalty': 6,
+        'idle_bonus': 3,
+        'traffic_threshold': 2,
+        'traffic_penalty': 2,
+        'traffic_bonus_local': 4,
+        'traffic_local_radius': 5,
+    }
+
+    print("Elevator Simulator Started!")
+    print("Commands: request <f> | undo | step | auto | status | exit")
+
+    while True:
+        try:
+            cmd = input("> ").strip()
+        except:
+            print("Exit.")
+            break
+
+        if not cmd:
+            continue
+
+        parts = cmd.split()
+        main = parts[0]
+
+        # ================= Request =================
+        if main == "request" or (main.lstrip("-").isdigit() and len(parts) == 1):
+            fl = int(parts[1]) if main == "request" else int(main)
+
+            if fl < MIN_FLOOR or fl > MAX_FLOOR:
+                print("Out of range.")
+                continue
+
+            req_q.push(fl)
+            undo.push(("req", fl))
+            traffic[floor_to_index(fl)] += 1
+
+            first = req_q.pop()
+            elev = assign_request_to_elevator_with_dynamic(first, elevs, traffic, params)
+            elev.add_request(first)
+
+            continue
+
+        # ================= UNDO =================
+        if main == "undo":
+            last = undo.pop()
+            if not last:
+                continue
+
+            typ, fl = last
+            removed = False
+
+            try:
+                req_q.q.remove(fl)
+                removed = True
+            except:
+                pass
+
+            for e in elevs:
+                if e.up.remove(fl):
+                    removed = True
+                if e.down.remove(fl):
+                    removed = True
+
+            if removed:
+                idx = floor_to_index(fl)
+                if traffic[idx] > 0:
+                    traffic[idx] -= 1
+            continue
+
+        # ================= STATUS =================
+        if main == "status":
+            print_status(elevs, req_q, undo, traffic)
+            continue
+
+        # ================= STEP =================
+        if main == "step":
+            if req_q.empty() and not any(e.has_pending() for e in elevs):
+                idle_brain_move(elevs)
+
+            while not req_q.empty():
+                rq = req_q.pop()
+                elev = assign_request_to_elevator_with_dynamic(rq, elevs, traffic, params)
+                elev.add_request(rq)
+
+            for e in elevs:
+                served = e.move_to_next()
+                if served is not None:
+                    idx = floor_to_index(served)
+                    if traffic[idx] > 0:
+                        traffic[idx] -= 1
+            continue
+
+        # ================= AUTO RUN =================
+        if main == "auto":
+            count = 0
+            while True:
+                while not req_q.empty():
+                    rq = req_q.pop()
+                    elev = assign_request_to_elevator_with_dynamic(rq, elevs, traffic, params)
+                    elev.add_request(rq)
+
+                if not any(e.has_pending() for e in elevs):
+                    break
+
+                for e in elevs:
+                    served = e.move_to_next()
+                    if served is not None:
+                        idx = floor_to_index(served)
+                        if traffic[idx] > 0:
+                            traffic[idx] -= 1
+
+                count += 1
+                if count > 1000:
+                    break
+            continue
+
+        if main == "help":
+            print("Commands: request <f> | undo | step | auto | status | exit")
+            continue
+
+        if main == "exit":
+            break
+
+# =============================================
+#   RUN PROGRAM
+# =============================================
+if __name__ == "__main__":
+    run_interactive()
